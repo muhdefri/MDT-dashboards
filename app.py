@@ -33,12 +33,33 @@ if mdt_file is not None and mcom_file is not None:
     df_mcom = pd.read_excel(mcom_file)
 
     # =========================
-    # FILTER SITE
+    # SELECT SITE
     # =========================
     selected_site = st.selectbox("Select Site", df_mdt["site"].unique())
 
     df_mdt = df_mdt[df_mdt["site"] == selected_site]
-    df_mcom = df_mcom[df_mcom["Site_ID"] == selected_site]
+
+    # =========================
+    # 🔥 FIX SITE MATCHING
+    # =========================
+    # normalize text
+    df_mdt["site_clean"] = df_mdt["site"].str.upper().str.replace("-", "").str.strip()
+    df_mcom["site_clean"] = df_mcom["Site_ID"].astype(str).str.upper().str.replace("-", "").str.strip()
+
+    selected_site_clean = selected_site.upper().replace("-", "")
+
+    # match pakai sebagian string
+    df_mcom = df_mcom[df_mcom["site_clean"].str.contains(selected_site_clean[:8], na=False)]
+
+    # =========================
+    # DEBUG INFO (PENTING)
+    # =========================
+    st.write("MDT rows:", len(df_mdt))
+    st.write("MCOM rows:", len(df_mcom))
+
+    if df_mcom.empty:
+        st.error("❌ MCOM tidak match dengan MDT (cek nama site)")
+        st.stop()
 
     # =========================
     # COLOR PER CI
@@ -51,7 +72,7 @@ if mdt_file is not None and mcom_file is not None:
     ci_color_map = {ci: generate_color(ci) for ci in unique_ci}
 
     # =========================
-    # FUNCTION: CREATE SECTOR
+    # CREATE SECTOR FUNCTION
     # =========================
     def create_sector(lat, lon, azimuth, beamwidth=60, distance=0.002):
 
@@ -67,17 +88,13 @@ if mdt_file is not None and mcom_file is not None:
         return [(lat, lon), (lat1, lon1), (lat2, lon2)]
 
     # =========================
-    # MAP FUNCTION
+    # CREATE MAP FUNCTION
     # =========================
     def create_map(mdt_data, mcom_data):
-
-        if mdt_data.empty or mcom_data.empty:
-            return None
 
         center_lat = mcom_data["Latitude"].mean()
         center_lon = mcom_data["Longitude"].mean()
 
-        # 🗺️ Satellite Map
         m = folium.Map(
             location=[center_lat, center_lon],
             zoom_start=15,
@@ -85,9 +102,7 @@ if mdt_file is not None and mcom_file is not None:
             attr="ESRI Satellite"
         )
 
-        # =========================
-        # PLOT MDT GRID
-        # =========================
+        # MDT GRID
         for _, row in mdt_data.iterrows():
             folium.CircleMarker(
                 location=[row["lat_grid"], row["long_grid"]],
@@ -97,34 +112,25 @@ if mdt_file is not None and mcom_file is not None:
                 fill_opacity=0.7
             ).add_to(m)
 
-        # =========================
-        # PLOT SECTOR (REAL FROM MCOM)
-        # =========================
+        # SECTOR FAN
         for _, row in mcom_data.iterrows():
 
             site_lat = row["Latitude"]
             site_lon = row["Longitude"]
             azimuth = row["Dir Beam"]
 
-            color = "#FFFFFF"  # sector warna putih transparan
-
-            sector = create_sector(site_lat, site_lon, azimuth, beamwidth=60)
+            sector = create_sector(site_lat, site_lon, azimuth)
 
             folium.Polygon(
                 locations=sector,
-                color=color,
+                color="white",
                 fill=True,
                 fill_opacity=0.2
             ).add_to(m)
 
-        # =========================
-        # PLOT SITE LABEL
-        # =========================
-        site_lat = mcom_data["Latitude"].mean()
-        site_lon = mcom_data["Longitude"].mean()
-
+        # SITE LABEL
         folium.Marker(
-            location=[site_lat, site_lon],
+            location=[center_lat, center_lon],
             icon=folium.DivIcon(
                 html=f"""
                 <div style="
@@ -141,44 +147,49 @@ if mdt_file is not None and mcom_file is not None:
         return m
 
     # =========================
-    # SPLIT BAND (FROM MCOM)
+    # BAND SPLIT
     # =========================
-    df_mcom["band"] = df_mcom["LTE"]
+    df_mcom["band"] = df_mcom["LTE"].astype(str)
 
-    bands = ["LTE900", "LTE1800", "LTE2100", "LTE2300"]
+    bands = {
+        "LTE 900": "900",
+        "LTE 1800": "1800",
+        "LTE 2100": "2100",
+        "LTE 2300": "2300"
+    }
 
     maps = {}
 
-    for band in bands:
-        mcom_band = df_mcom[df_mcom["LTE"].astype(str).str.contains(band.replace("LTE", ""))]
-        maps[band] = create_map(df_mdt, mcom_band)
+    for band_name, band_val in bands.items():
+        mcom_band = df_mcom[df_mcom["band"].str.contains(band_val, na=False)]
+        maps[band_name] = create_map(df_mdt, mcom_band)
 
     # =========================
-    # DISPLAY MAPS
+    # DISPLAY
     # =========================
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("LTE 900")
-        if maps["LTE900"]:
-            st_folium(maps["LTE900"], height=400)
+        if maps["LTE 900"]:
+            st_folium(maps["LTE 900"], height=400)
 
     with col2:
         st.subheader("LTE 1800")
-        if maps["LTE1800"]:
-            st_folium(maps["LTE1800"], height=400)
+        if maps["LTE 1800"]:
+            st_folium(maps["LTE 1800"], height=400)
 
     col3, col4 = st.columns(2)
 
     with col3:
         st.subheader("LTE 2100")
-        if maps["LTE2100"]:
-            st_folium(maps["LTE2100"], height=400)
+        if maps["LTE 2100"]:
+            st_folium(maps["LTE 2100"], height=400)
 
     with col4:
         st.subheader("LTE 2300")
-        if maps["LTE2300"]:
-            st_folium(maps["LTE2300"], height=400)
+        if maps["LTE 2300"]:
+            st_folium(maps["LTE 2300"], height=400)
 
     # =========================
     # LEGEND
