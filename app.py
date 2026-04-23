@@ -2,10 +2,12 @@ import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
+import hashlib
+import math
 
 st.set_page_config(layout="wide")
 
-st.title("📡 MDT LTE Dashboard (4 Band View)")
+st.title("📡 MDT LTE Dashboard (Telco Style)")
 
 # =========================
 # UPLOAD FILE
@@ -15,32 +17,14 @@ uploaded_file = st.file_uploader("Upload CSV / CSV.GZ MDT", type=["csv", "gz"])
 if uploaded_file is not None:
 
     # =========================
-    # AUTO READ FILE (CSV / GZ)
+    # READ FILE
     # =========================
-    try:
-        if uploaded_file.name.endswith(".gz"):
-            df = pd.read_csv(uploaded_file, compression="gzip")
-        else:
-            df = pd.read_csv(uploaded_file)
+    if uploaded_file.name.endswith(".gz"):
+        df = pd.read_csv(uploaded_file, compression="gzip")
+    else:
+        df = pd.read_csv(uploaded_file)
 
-    except Exception as e:
-        st.error(f"Gagal membaca file: {e}")
-        st.stop()
-
-    # =========================
-    # PREVIEW
-    # =========================
-    st.subheader("📄 Data Preview")
-    st.dataframe(df.head())
-
-    # =========================
-    # VALIDASI KOLOM
-    # =========================
-    required_cols = ["site", "ci", "lat_grid", "long_grid", "rsrp_mean"]
-
-    if not all(col in df.columns for col in required_cols):
-        st.error("Kolom tidak sesuai! Pastikan ada: site, ci, lat_grid, long_grid, rsrp_mean")
-        st.stop()
+    df = df[["date", "site", "enodebid", "ci", "long_grid", "lat_grid"]]
 
     # =========================
     # FILTER SITE
@@ -49,14 +33,20 @@ if uploaded_file is not None:
     df = df[df["site"] == selected_site]
 
     # =========================
+    # COLOR PER CI
+    # =========================
+    def generate_color(ci):
+        hash_val = hashlib.md5(str(ci).encode()).hexdigest()
+        return f"#{hash_val[:6]}"
+
+    unique_ci = df["ci"].unique()
+    ci_color_map = {ci: generate_color(ci) for ci in unique_ci}
+
+    # =========================
     # BAND CLASSIFICATION
     # =========================
     def classify_band(ci):
-        try:
-            ci = int(ci)
-        except:
-            return "Unknown"
-
+        ci = int(ci)
         if ci < 100000:
             return "LTE 900"
         elif ci < 200000:
@@ -69,25 +59,23 @@ if uploaded_file is not None:
     df["band"] = df["ci"].apply(classify_band)
 
     # =========================
-    # COLOR FUNCTION (RSRP)
+    # FUNCTION: CREATE SECTOR FAN
     # =========================
-    def get_color(rsrp):
-        try:
-            rsrp = float(rsrp)
-        except:
-            return "gray"
+    def create_sector(lat, lon, azimuth, distance=0.002):
 
-        if rsrp >= -90:
-            return "green"
-        elif rsrp >= -105:
-            return "yellow"
-        elif rsrp >= -115:
-            return "orange"
-        else:
-            return "red"
+        angle_left = math.radians(azimuth - 20)
+        angle_right = math.radians(azimuth + 20)
+
+        lat1 = lat + distance * math.cos(angle_left)
+        lon1 = lon + distance * math.sin(angle_left)
+
+        lat2 = lat + distance * math.cos(angle_right)
+        lon2 = lon + distance * math.sin(angle_right)
+
+        return [(lat, lon), (lat1, lon1), (lat2, lon2)]
 
     # =========================
-    # FUNCTION CREATE MAP
+    # MAP FUNCTION
     # =========================
     def create_map(data):
 
@@ -97,25 +85,47 @@ if uploaded_file is not None:
         center_lat = data["lat_grid"].mean()
         center_lon = data["long_grid"].mean()
 
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
+        # 🗺️ Satellite Map
+        m = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=15,
+            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            attr="ESRI Satellite"
+        )
 
         for _, row in data.iterrows():
+
+            color = ci_color_map[row["ci"]]
+
+            # plot titik
             folium.CircleMarker(
                 location=[row["lat_grid"], row["long_grid"]],
-                radius=4,
-                color=get_color(row["rsrp_mean"]),
+                radius=3,
+                color=color,
                 fill=True,
-                fill_opacity=0.7,
-                popup=f"""
-                CI: {row['ci']}<br>
-                RSRP: {row['rsrp_mean']}
-                """
+                fill_opacity=0.8
+            ).add_to(m)
+
+            # 🎯 DUMMY AZIMUTH (sementara)
+            azimuth = int(row["ci"]) % 360
+
+            sector = create_sector(
+                row["lat_grid"],
+                row["long_grid"],
+                azimuth
+            )
+
+            folium.Polygon(
+                locations=sector,
+                color=color,
+                fill=True,
+                fill_opacity=0.3
             ).add_to(m)
 
         return m
 
     # =========================
-    # SPLIT DATA PER BAND
+    # SPLIT BAND
     # =========================
     df_900 = df[df["band"] == "LTE 900"]
     df_1800 = df[df["band"] == "LTE 1800"]
@@ -123,7 +133,7 @@ if uploaded_file is not None:
     df_2300 = df[df["band"] == "LTE 2300"]
 
     # =========================
-    # LAYOUT 4 MAP
+    # LAYOUT
     # =========================
     col1, col2 = st.columns(2)
 
@@ -132,16 +142,12 @@ if uploaded_file is not None:
         m1 = create_map(df_900)
         if m1:
             st_folium(m1, height=400)
-        else:
-            st.info("No data")
 
     with col2:
         st.subheader("LTE 1800")
         m2 = create_map(df_1800)
         if m2:
             st_folium(m2, height=400)
-        else:
-            st.info("No data")
 
     col3, col4 = st.columns(2)
 
@@ -150,13 +156,25 @@ if uploaded_file is not None:
         m3 = create_map(df_2100)
         if m3:
             st_folium(m3, height=400)
-        else:
-            st.info("No data")
 
     with col4:
         st.subheader("LTE 2300")
         m4 = create_map(df_2300)
         if m4:
             st_folium(m4, height=400)
-        else:
-            st.info("No data")
+
+    # =========================
+    # LEGEND
+    # =========================
+    st.subheader("📌 Legend")
+
+    legend_html = ""
+    for ci, color in ci_color_map.items():
+        legend_html += f"""
+        <div style="display:flex; align-items:center;">
+            <div style="width:15px; height:15px; background:{color}; margin-right:5px;"></div>
+            CI {ci}
+        </div>
+        """
+
+    st.markdown(legend_html, unsafe_allow_html=True)
