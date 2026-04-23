@@ -10,27 +10,52 @@ st.title("📡 MDT LTE Dashboard (4 Band View)")
 # =========================
 # UPLOAD FILE
 # =========================
-uploaded_file = st.file_uploader("Upload CSV MDT", type=["csv"])
+uploaded_file = st.file_uploader("Upload CSV / CSV.GZ MDT", type=["csv", "gz"])
 
 if uploaded_file is not None:
 
-    df = pd.read_csv(uploaded_file)
+    # =========================
+    # AUTO READ FILE (CSV / GZ)
+    # =========================
+    try:
+        if uploaded_file.name.endswith(".gz"):
+            df = pd.read_csv(uploaded_file, compression="gzip")
+        else:
+            df = pd.read_csv(uploaded_file)
 
+    except Exception as e:
+        st.error(f"Gagal membaca file: {e}")
+        st.stop()
+
+    # =========================
+    # PREVIEW
+    # =========================
     st.subheader("📄 Data Preview")
     st.dataframe(df.head())
+
+    # =========================
+    # VALIDASI KOLOM
+    # =========================
+    required_cols = ["site", "ci", "lat_grid", "long_grid", "rsrp_mean"]
+
+    if not all(col in df.columns for col in required_cols):
+        st.error("Kolom tidak sesuai! Pastikan ada: site, ci, lat_grid, long_grid, rsrp_mean")
+        st.stop()
 
     # =========================
     # FILTER SITE
     # =========================
     selected_site = st.selectbox("Select Site", df["site"].unique())
-
     df = df[df["site"] == selected_site]
 
     # =========================
-    # 🎯 BAND CLASSIFICATION (EDITABLE)
+    # BAND CLASSIFICATION
     # =========================
     def classify_band(ci):
-        ci = int(ci)
+        try:
+            ci = int(ci)
+        except:
+            return "Unknown"
 
         if ci < 100000:
             return "LTE 900"
@@ -47,6 +72,11 @@ if uploaded_file is not None:
     # COLOR FUNCTION (RSRP)
     # =========================
     def get_color(rsrp):
+        try:
+            rsrp = float(rsrp)
+        except:
+            return "gray"
+
         if rsrp >= -90:
             return "green"
         elif rsrp >= -105:
@@ -59,7 +89,8 @@ if uploaded_file is not None:
     # =========================
     # FUNCTION CREATE MAP
     # =========================
-    def create_map(data, title):
+    def create_map(data):
+
         if data.empty:
             return None
 
@@ -75,6 +106,10 @@ if uploaded_file is not None:
                 color=get_color(row["rsrp_mean"]),
                 fill=True,
                 fill_opacity=0.7,
+                popup=f"""
+                CI: {row['ci']}<br>
+                RSRP: {row['rsrp_mean']}
+                """
             ).add_to(m)
 
         return m
@@ -94,26 +129,34 @@ if uploaded_file is not None:
 
     with col1:
         st.subheader("LTE 900")
-        m1 = create_map(df_900, "LTE 900")
+        m1 = create_map(df_900)
         if m1:
             st_folium(m1, height=400)
+        else:
+            st.info("No data")
 
     with col2:
         st.subheader("LTE 1800")
-        m2 = create_map(df_1800, "LTE 1800")
+        m2 = create_map(df_1800)
         if m2:
             st_folium(m2, height=400)
+        else:
+            st.info("No data")
 
     col3, col4 = st.columns(2)
 
     with col3:
         st.subheader("LTE 2100")
-        m3 = create_map(df_2100, "LTE 2100")
+        m3 = create_map(df_2100)
         if m3:
             st_folium(m3, height=400)
+        else:
+            st.info("No data")
 
     with col4:
         st.subheader("LTE 2300")
-        m4 = create_map(df_2300, "LTE 2300")
+        m4 = create_map(df_2300)
         if m4:
             st_folium(m4, height=400)
+        else:
+            st.info("No data")
